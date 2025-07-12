@@ -1,0 +1,128 @@
+%%Clean it up!
+
+clearvars
+clc
+close all
+
+%house keeping, clears all variables and command window and figures
+
+%% Import Script for EBSD Data
+%
+% This script was automatically created by the import wizard. You should
+% run the whoole script or parts of it in order to import your data. There
+% is no problem in making any changes to this script.
+
+%% Specify Crystal and Specimen Symmetries
+
+% crystal symmetry
+CS = {... 
+  'notIndexed',...
+  crystalSymmetry('6/mmm', [3 3 4.7], 'Y||a*', 'X||b', 'Z||c*', 'mineral', '(Alpha)', 'color', [0.53 0.81 0.98]),...
+  crystalSymmetry('m-3m', [3.3 3.3 3.3], 'mineral', '(Beta)', 'color', [0.56 0.74 0.56])};
+
+% plotting convention
+setMTEXpref('xAxisDirection','east');
+setMTEXpref('zAxisDirection','intoPlane');
+
+%% Specify File Names
+
+% path to files
+pname = 'path here';
+
+% which files to be imported
+fname = [pname '\file name here'];
+
+%% Import the Data
+
+% create an EBSD variable containing the data
+ebsd = EBSD.load(fname,CS,'interface','osc',...
+  'convertEuler2SpatialReferenceFrame','setting 2');
+
+%% Data cleanup
+
+[grains,ebsd.grainId,ebsd.mis2mean] = calcGrains(ebsd,'angle',1.5*degree);
+
+% Remove Small Grains
+ebsd(ebsd.prop.confidenceindex<0.05) = []; % 0.1 is the threshold for "good"
+
+% Apply A Smoothing Filter (F)
+F = halfQuadraticFilter;
+F.alpha = 25; % .25 to 5mil, intensity
+ebsd = smooth(ebsd,F,'fill');
+
+[grains,ebsd.grainId,ebsd.mis2mean] = calcGrains(ebsd,'angle',1.5*degree);
+
+
+
+%% plot IPF alpha
+
+ipfKey = ipfHSVKey(ebsd('(Alpha)').CS);
+ipfKey.inversePoleFigureDirection = yvector; % This is the z-vector due to different reference frames. Look at the settings window in OIM.
+figure
+plot(ipfKey);
+
+% calls out HCP symetry and creates new figure to plot ipf of alpha wr2 y
+% direction (up the screen)
+
+cs_hcp = ebsd('(Alpha)').CS;
+figure
+color = ipfKey.orientation2color(ebsd('(Alpha)').orientations);
+plot(ebsd('(Alpha)'),color)
+
+%% Varied graph approach: Beta recon plot
+
+setMTEXpref('xAxisDirection','east'); % east for BF up, west for BF down
+setMTEXpref('zAxisDirection','intoPlane');
+beta2alpha = orientation.Burgers(ebsd('(Beta)').CS,ebsd('(Alpha)').CS);
+round2Miller(beta2alpha);
+
+[grains,ebsd.grainId] = calcGrains(ebsd('indexed'),'threshold',1.5*degree);
+
+job = parentGrainReconstructor(ebsd, grains);
+job.p2c = beta2alpha
+
+job.calcVariantGraph('threshold',1.5*degree)
+
+job.clusterVariantGraph('numIter',3)
+
+job.calcParentFromVote
+
+job.mergeSimilar('threshold',5*degree);
+
+job.mergeInclusions('maxSize',25);
+
+%% Creating Figures for Beta Recon
+
+parentEBSD = job.calcParentEBSD;
+parentEBSD = parentEBSD('(Beta)');
+% take ebsd variable for reconstruction and create its own variable for
+%manipulation
+[pG,parentEBSD.grainId] = calcGrains(parentEBSD('(Beta)'),'angle',5*degree);
+% calculate parent grains
+parentEBSD(pG(pG.grainSize<50)) = []
+
+% filter F
+F = halfQuadraticFilter;
+F.alpha = 25;
+parentEBSD = smooth(parentEBSD,F,'fill');
+
+[pG,parentEBSD.grainId] = calcGrains(parentEBSD('(Beta)'),'angle',5*degree);
+
+setMTEXpref('xAxisDirection','east'); % east for BF up, west for BF down
+setMTEXpref('zAxisDirection','intoPlane');
+
+ipfKey2 = ipfHSVKey(parentEBSD('(Beta)').CS);
+ipfKey2.inversePoleFigureDirection = yvector;
+
+figure
+plot(ipfKey2)
+
+figure
+color2 = ipfKey2.orientation2color(pG('(Beta)').meanOrientation);
+%in alpha IFP we used the orientation for color, here we are using mean
+%orientation for color
+plot(pG('(Beta)'),color2);
+hold on
+plot(pG.boundary,'lineWidth',2)
+hold off
+
